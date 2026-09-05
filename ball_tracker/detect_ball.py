@@ -18,6 +18,7 @@ from sensor_msgs.msg        import Image
 from geometry_msgs.msg      import Point
 from cv_bridge              import CvBridge, CvBridgeError
 import ball_tracker.process_image as proc
+import time
 
 class DetectBall(Node):
 
@@ -63,10 +64,26 @@ class DetectBall(Node):
 
         self.bridge = CvBridge()
 
+        # ==========================
+        # Detection Accuracy Counters
+        # ==========================
+        self.total_frames = 0
+        self.detected_frames = 0
+        # Latency accumulator
+        self.total_latency = 0.0
+        # Print experiment results every 30 seconds
+        self.timer = self.create_timer(30.0, self.print_results)
+
+
         if(self.tuning_mode):
             proc.create_tuning_window(self.tuning_params)
 
+
     def callback(self,data):
+        # Start timer
+        start = time.perf_counter()    
+        # Count every processed frame
+        self.total_frames += 1
         try:
             cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
         except CvBridgeError as e:
@@ -102,11 +119,49 @@ class DetectBall(Node):
                     point_out.y = y
                     point_out.z = s
 
+
             if (point_out.z > 0):
-                self.ball_pub.publish(point_out) 
+
+                # Count successful detections
+                self.detected_frames += 1
+
+                self.ball_pub.publish(point_out)
+
+            # Stop timer
+            end = time.perf_counter()
+
+            # Convert to milliseconds
+            latency = (end - start) * 1000
+
+            # Add to total latency
+            self.total_latency += latency
+
+            
         except CvBridgeError as e:
             print(e)  
 
+    def print_results(self):
+
+        if self.total_frames == 0:
+            return
+
+        accuracy = (self.detected_frames / self.total_frames) * 100
+        average_latency = self.total_latency / self.total_frames
+
+        self.get_logger().info("")
+        self.get_logger().info("====================================")
+        self.get_logger().info(" Detection Accuracy Results")
+        self.get_logger().info("====================================")
+        self.get_logger().info(f"Total Frames      : {self.total_frames}")
+        self.get_logger().info(f"Detected Frames   : {self.detected_frames}")
+        self.get_logger().info(f"Detection Accuracy: {accuracy:.2f}%")
+        self.get_logger().info(f"Average Latency : {average_latency:.2f} ms")
+        self.get_logger().info("====================================")
+
+        # Reset counters for the next experiment
+        self.total_frames = 0
+        self.detected_frames = 0
+        self.total_latency = 0.0
 
 def main(args=None):
 
